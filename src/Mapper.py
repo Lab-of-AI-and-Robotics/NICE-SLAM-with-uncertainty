@@ -418,7 +418,7 @@ class Mapper(object):
                     self.stage = 'color' 
                     if self.uncert:       
                                                       # uncertainty iter ratio
-                        if joint_iter <= int(num_joint_iters * 0.7):
+                        if joint_iter <= int(num_joint_iters * 0.8):
                             self.uncert_stage = True
                         else:
                             self.uncert_stage = True
@@ -570,7 +570,6 @@ class Mapper(object):
                     loss += weighted_occup
                     
                     ##################################################
-                    
                     
                     # print(l1oss)
                 else:
