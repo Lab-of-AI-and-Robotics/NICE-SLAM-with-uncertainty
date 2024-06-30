@@ -3,5 +3,5 @@ mapping:
   bound: [[-6.7,5.1],[-7.5,4.9],[-2.8,3.5]]
   marching_cubes_bound: [[-6.7,5.1],[-7.5,4.9],[-2.8,3.5]]
 data:
-  input_folder: /home/lair99/dataset/Replica/office3
+  input_folder: Datasets/Replica/office3
   output: output/Replica/office3

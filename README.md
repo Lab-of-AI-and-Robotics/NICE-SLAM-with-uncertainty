@@ -3,8 +3,12 @@
 
 ## Dependencies
 ```bash
-sudo apt-get install libopenexr-dev
-conda env create -f environment.yaml
+# create conda env
+conda create -n nice-slam python==3.8
+# install torch
+
+# other requirements
+pip install -r requirements.txt
 ```
 
 ## Usage
