@@ -116,34 +116,55 @@ class Tracker(object):
         if self.handle_dynamic:
             tmp = torch.abs(batch_gt_depth-depth)/torch.sqrt(uncertainty+1e-10)
             mask = (tmp < 10*tmp.median()) & (batch_gt_depth > 0)
+            # mask = batch_gt_depth > 0
         else:
             mask = batch_gt_depth > 0
         
-        if False:
-            loss = ((batch_gt_depth-depth)**2 /
-                    (uncertainty+1e-10))[mask].mean()
+
+        if self.uncert:
+            # loss1 = torch.mean((1 / (2 * (uncertainty_ours[1][mask]))) * ((batch_gt_depth[mask]- depth[mask]) ** 2))
+            # loss2 = 0.5 * (torch.log(+ uncertainty_ours[1])).mean()
+            # loss_uncert = loss1 + loss2
+            # loss_ori = torch.mean((batch_gt_depth[mask] - depth[mask]) ** 2)
+            # loss = 0.9 * loss_ori + 0.1 * loss_uncert
+
+            # loss = torch.mean((batch_gt_depth[mask] - depth[mask]) ** 2)
+            loss = ((batch_gt_depth-depth)**2 / (uncertainty+1e-10))[mask].mean()
         else:
-            loss = (torch.abs(batch_gt_depth-depth) /
-                    torch.sqrt(uncertainty+1e-10))[mask].sum()
+            # loss = torch.mean((batch_gt_depth[mask] - depth[mask]) ** 2)
+            loss = ((batch_gt_depth-depth)**2 / (uncertainty+1e-10))[mask].mean()
 
         if self.use_color_in_tracking:
-            bias = 1e-9
-            if False:
-                color_loss1 = ((batch_gt_color - color)**2 * (1 / (2*(uncertainty_ours+bias).unsqueeze(-1))))[mask].mean()
-                loss += self.w_color_loss*color_loss1
+            if self.uncert:
+
+                ####################### L2 ##############
+                # uncert1_c_loss = torch.mean( (1 / (2*(uncertainty_ours[0]))) * ((batch_gt_color - color)**2))
+                # uncert2_c_loss = 0.5 * (torch.log(uncertainty_ours[0])).mean()
+                # uncert_c_loss = uncert1_c_loss + uncert2_c_loss
+                # uncert_c_loss = self.w_color_loss * uncert_c_loss
+                # # loss += uncert_c_loss 
+                # ##################################################
+                # color_loss = ((batch_gt_color - color)**2).mean()            
+                # weighted_color_loss = self.w_color_loss * color_loss
+                # # loss += weighted_color_loss
+                # loss += 0.9 * weighted_color_loss + 0.1 * uncert_c_loss 
                 
-                uncert_loss2 = 0.5 * (torch.log(bias + uncertainty_ours))[mask].mean()
-                weighted_uncert_loss2 = self.w_color_loss * uncert_loss2
-                loss += weighted_uncert_loss2
+
+                color_loss = ((batch_gt_color - color)**2)[mask].mean()        
+                weighted_color_loss = self.w_color_loss * color_loss
+                loss += weighted_color_loss
+
+                # color_loss = torch.abs(batch_gt_color - color)[mask].sum()
+                # loss += self.w_color_loss*color_loss
                 
-                occup_loss = 0.01 * (alpha)[mask].mean()
-                weighted_occup = self.w_color_loss * occup_loss
-                loss += weighted_occup
-                loss += 4.0
             else:
-                color_loss = torch.abs(
-                    batch_gt_color - color)[mask].sum()
-                loss += self.w_color_loss*color_loss
+                color_loss = ((batch_gt_color - color)**2)[mask].mean()        
+                weighted_color_loss = self.w_color_loss * color_loss
+                loss += weighted_color_loss
+
+                # color_loss = torch.abs(batch_gt_color - color)[mask].sum()
+                # loss += self.w_color_loss*color_loss
+
 
         loss.backward()
         optimizer.step()

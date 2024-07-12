@@ -77,8 +77,11 @@ class Visualizer(object):
                 color_np = color.detach().cpu().numpy()
                 
                 if self.uncert:
-                    uncertainty_ours_np = uncertainty_ours.detach().cpu().numpy()
-                    uncertainty_ours_np = np.clip(uncertainty_ours_np, 0, 1)
+                    # uncertainty_ours_np = uncertainty_ours.detach().cpu().numpy()
+                    uncertainty_ours_np0 = uncertainty_ours[0].detach().cpu().numpy()
+                    uncertainty_ours_np0 = np.clip(uncertainty_ours_np0, 0, 1)
+                    uncertainty_ours_np1 = uncertainty_ours[1].detach().cpu().numpy()
+                    uncertainty_ours_np1 = np.clip(uncertainty_ours_np1, 0, 1)
                     
                 depth_residual = np.abs(gt_depth_np - depth_np)
                 depth_residual[gt_depth_np == 0.0] = 0.0
@@ -105,9 +108,9 @@ class Visualizer(object):
                     axs[0, 2].set_title('Depth Residual')
                     axs[0, 2].set_xticks([])
                     axs[0, 2].set_yticks([])
-                    axs[0, 3].imshow(depth_residual, cmap="plasma",
+                    axs[0, 3].imshow(uncertainty_ours_np1, cmap="plasma",
                                     vmin=0, vmax=max_depth)
-                    axs[0, 3].set_title('Depth Residual')
+                    axs[0, 3].set_title('Uncertainty Depth')
                     axs[0, 3].set_xticks([])
                     axs[0, 3].set_yticks([])
                     gt_color_np = np.clip(gt_color_np, 0, 1)
@@ -125,8 +128,8 @@ class Visualizer(object):
                     axs[1, 2].set_title('RGB Residual')
                     axs[1, 2].set_xticks([])
                     axs[1, 2].set_yticks([])
-                    axs[1, 3].imshow(uncertainty_ours_np, cmap="plasma")
-                    axs[1, 3].set_title('Uncertainty Map')
+                    axs[1, 3].imshow(uncertainty_ours_np0, cmap="plasma")
+                    axs[1, 3].set_title('Uncertainty RGB')
                     axs[1, 3].set_xticks([])
                     axs[1, 3].set_yticks([])
                 else:

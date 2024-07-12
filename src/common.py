@@ -249,7 +249,10 @@ def raw2outputs_nerf_color(raw, z_vals, rays_d, occupancy=False, device='cuda:0'
     depth_var = torch.sum(weights*tmp*tmp, dim=1)  # (N_rays)
     return depth_map, depth_var, rgb_map, weights
 
-def raw2outputs_nerf_color_uncert(raw, z_vals, rays_d, occupancy=False, device='cuda:0', sigmoid=False):
+
+
+#####################################################################################################
+def raw2outputs_nerf_uncert(raw, z_vals, rays_d, occupancy=False, device='cuda:0', sigmoid=False):
     """
     Transforms model's predictions to semantically meaningful values.
 
@@ -267,8 +270,7 @@ def raw2outputs_nerf_color_uncert(raw, z_vals, rays_d, occupancy=False, device='
         weights (tensor, N_rays*N_samples): weights assigned to each sampled color.
     """
 
-    def raw2alpha(raw, dists, act_fn=F.relu): return 1. - \
-        torch.exp(-act_fn(raw)*dists)
+    def raw2alpha(raw, dists, act_fn=F.relu): return 1. - torch.exp(-act_fn(raw)*dists)
     dists = z_vals[..., 1:] - z_vals[..., :-1]
     dists = dists.float()
     dists = torch.cat([dists, torch.Tensor([1e10]).float().to(
@@ -276,22 +278,15 @@ def raw2outputs_nerf_color_uncert(raw, z_vals, rays_d, occupancy=False, device='
 
     # different ray angle corresponds to different unit length
     dists = dists * torch.norm(rays_d[..., None, :], dim=-1)
-    ####################### 수정
-    # rgb = raw[..., :-1]
-    # raw = r, g, b, uncertainty, occupancy
-    
-    if sigmoid:
-        rgb = torch.sigmoid(raw[..., :3])
-    else:
-        rgb = raw[..., :3]
+    rgb = raw[..., :3]
+    density = raw[...,4]
 
     if occupancy:
-        ################# 수정
         raw[..., 4] = torch.sigmoid(10*raw[..., -1])
         alpha = raw[..., -1]
     else:
-        # original nerf, volume density
-        alpha = raw2alpha(raw[..., -1], dists)  # (N_rays, N_samples)
+        alpha = raw2alpha(raw[..., -1], dists)  
+    
 
     weights = alpha.float() * torch.cumprod(torch.cat([torch.ones((alpha.shape[0], 1)).to(
         device).float(), (1.-alpha + 1e-10).float()], -1).float(), -1)[:, :-1]
@@ -300,23 +295,39 @@ def raw2outputs_nerf_color_uncert(raw, z_vals, rays_d, occupancy=False, device='
     tmp = (z_vals-depth_map.unsqueeze(-1))  # (N_rays, N_samples)
     depth_var = torch.sum(weights*tmp*tmp, dim=1)  # (N_rays)
     
-    ###### 수정
-    #### uncertainty = beta**2
+    #################################################################3 수정
     uncertainty = F.softplus(raw[..., 3]) + 0.01
-    
-    uncertainty_ours = torch.sum(weights * weights * uncertainty, -1)
-    # print(uncertainty_ours.shape)
-    
-    # alpha_ = torch.mean(alpha, -1)
+    # uncertainty = torch.exp(raw[..., 3]) + 1
+    distXdensity = dists * F.relu(density)
+    # distXdensity = dists * F.relu(raw[...,4])
+    distXdensity_sum = torch.cat([torch.zeros((distXdensity.shape[0], 1), device=device), -distXdensity], axis=-1)
+
+    distXdensity_sum = distXdensity_sum.cumsum(axis=-1)
+    distXdensity_sum[:, 0] = 0
+    mu_Ti = distXdensity_sum[:, :-1]
+    Ti = torch.exp(mu_Ti)
+    Ti_copy = Ti.unsqueeze(-1).expand(-1, -1, 3)
+    uncertainty_copy = uncertainty.unsqueeze(-1).expand(-1, -1, 3)
+    uncertainty_for_rgb = torch.sum(Ti_copy * Ti_copy * rgb * rgb * uncertainty_copy, -2)
+    uncertainty_for_depth = torch.sum(Ti * Ti * z_vals *z_vals * uncertainty, -1)
+    uncertainty_ours = [uncertainty_for_rgb, uncertainty_for_depth]
+
+
+    ##################### uncert ########################
+    # Transmit = torch.cumprod(torch.cat([torch.ones((alpha.shape[0], 1)).to(device).float(), (1.-alpha + 1e-10).float()], -1).float(), dim=-1)[:, :-1]
+    # Transmit_copy = Transmit.unsqueeze(-1).expand(-1, -1, 3)
+    # uncertainty = F.softplus(raw[..., 3]) + 0.01
+    # uncertainty_copy = uncertainty.unsqueeze(-1).expand(-1, -1, 3)
+    # uncertainty_for_rgb = torch.sum(Transmit_copy * Transmit_copy * rgb * rgb * uncertainty_copy, -2)
+    # uncertainty_for_depth = torch.sum(Transmit * Transmit * z_vals *z_vals * uncertainty, -1)
+    # uncertainty_ours = [uncertainty_for_rgb, uncertainty_for_depth]
+
+
     alpha_ = (raw[..., -1]).mean(-1)
     
-    # print(alpha_.shape)
-    # print("\nMinimum uncertainty : " + str(torch.min(uncertainty_ours)))
-    # print("Maximum uncertainty : " + str(torch.max(uncertainty_ours)))
-    # print(alpha.shape)
-    
-    # print(uncertainty_ours.shape)
     return depth_map, depth_var, rgb_map, weights, uncertainty_ours, alpha_
+
+######################################################################################################
 
 
 def get_rays(H, W, fx, fy, cx, cy, c2w, device):

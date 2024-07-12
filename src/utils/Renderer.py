@@ -1,5 +1,5 @@
 import torch
-from src.common import get_rays, raw2outputs_nerf_color, sample_pdf, raw2outputs_nerf_color_uncert
+from src.common import get_rays, raw2outputs_nerf_color, sample_pdf, raw2outputs_nerf_uncert
 
 
 class Renderer(object):
@@ -205,7 +205,7 @@ class Renderer(object):
         if self.uncert:
             ############## 수정 후
             # print(raw.shape)
-            depth, uncertainty_, color, weights, uncertainty_ours, alpha = raw2outputs_nerf_color_uncert(
+            depth, uncertainty_, color, weights, uncertainty_ours, alpha = raw2outputs_nerf_uncert(
                 raw, z_vals, rays_d, occupancy=self.occupancy, device=device, sigmoid=self.sigmoid)
 
             ###############
@@ -231,7 +231,7 @@ class Renderer(object):
             if self.uncert:
                 ############## 수정 후
                 # print(raw.shape)
-                depth, uncertainty_, color, weights, uncertainty_ours, alpha = raw2outputs_nerf_color_uncert(
+                depth, uncertainty_, color, weights, uncertainty_ours, alpha = raw2outputs_nerf_uncert(
                     raw, z_vals, rays_d, occupancy=self.occupancy, device=device, sigmoid=self.sigmoid)
                 return depth, uncertainty_, color, uncertainty_ours, alpha
                 ###############3
@@ -276,7 +276,8 @@ class Renderer(object):
             uncertainty_list = []
             color_list = []
             ################## 수정
-            uncertainty_ours_list = []
+            uncertainty_ours_list0 = []
+            uncertainty_ours_list1 = []
 
             ray_batch_size = self.ray_batch_size
             gt_depth = gt_depth.reshape(-1)
@@ -295,7 +296,8 @@ class Renderer(object):
                 if self.uncert:
                     depth, uncertainty, color, uncertainty_ours, alpha = ret
                     ############ 수정, 추가
-                    uncertainty_ours_list.append(uncertainty_ours.double())
+                    uncertainty_ours_list0.append(uncertainty_ours[0].double())
+                    uncertainty_ours_list1.append(uncertainty_ours[1].double())
                 else:
                     ######### 원본
                     depth, uncertainty, color = ret
@@ -307,14 +309,18 @@ class Renderer(object):
             uncertainty = torch.cat(uncertainty_list, dim=0)
             color = torch.cat(color_list, dim=0)
             if self.uncert:
-                uncertainty_ours = torch.cat(uncertainty_ours_list, dim=0)
+                uncertainty_ours0 = torch.cat(uncertainty_ours_list0, dim=0)
+                uncertainty_ours1 = torch.cat(uncertainty_ours_list1, dim=0)
 
             depth = depth.reshape(H, W)
             uncertainty = uncertainty.reshape(H, W)
             color = color.reshape(H, W, 3)
-       
+
             if self.uncert:
-                uncertainty_ours = uncertainty_ours.reshape(H, W)
+                # uncertainty_ours = uncertainty_ours.reshape(H, W, 3)
+                uncertainty_ours0 = uncertainty_ours0.reshape(H, W, 3)
+                uncertainty_ours1 = uncertainty_ours1.reshape(H, W)
+                uncertainty_ours = [uncertainty_ours0, uncertainty_ours1]
                 return depth, uncertainty, color, uncertainty_ours
             else:
                 return depth, uncertainty, color

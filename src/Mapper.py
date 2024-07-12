@@ -1,16 +1,18 @@
 import os
-import time
-
 import cv2
 import numpy as np
 import torch
 from colorama import Fore, Style
 from torch.autograd import Variable
-
+import time
 from src.common import (get_camera_from_tensor, get_samples,
                         get_tensor_from_camera, random_select)
 from src.utils.datasets import get_dataset
 from src.utils.Visualizer import Visualizer
+
+from pytorch_msssim import ms_ssim
+from torchmetrics.image.lpip import LearnedPerceptualImagePatchSimilarity
+from PIL import Image
 
 
 class Mapper(object):
@@ -28,12 +30,13 @@ class Mapper(object):
 
         ########### 수정
         ### 
+        self.uncert_stage = False
         self.uncert = uncert
         # print(self.uncert)
         
         self.w_uncert_loss = cfg['mapping']['w_color_loss']
         print(self.w_uncert_loss)
-        
+        self.output = cfg['data']['output']
         self.idx = slam.idx
         self.nice = slam.nice
         self.c = slam.shared_c
@@ -261,6 +264,7 @@ class Mapper(object):
         bottom = torch.from_numpy(np.array([0, 0, 0, 1.]).reshape(
             [1, 4])).type(torch.float32).to(device)
 
+
         if len(keyframe_dict) == 0:
             optimize_frame = []
         else:
@@ -419,7 +423,7 @@ class Mapper(object):
                     if self.uncert:       
                                                       # uncertainty iter ratio
                         if joint_iter <= int(num_joint_iters * 0.8):
-                            self.uncert_stage = True
+                            self.uncert_stage = False
                         else:
                             self.uncert_stage = True
 
@@ -430,7 +434,6 @@ class Mapper(object):
                 optimizer.param_groups[4]['lr'] = cfg['mapping']['stage'][self.stage]['color_lr']*lr_factor
                 if self.BA:
                     if self.stage == 'color':
-                        self.uncert_stage = True
                         optimizer.param_groups[5]['lr'] = self.BA_cam_lr
             else:
                 self.stage = 'color'
@@ -509,76 +512,45 @@ class Mapper(object):
                                                     gt_depth=None if self.coarse_mapper else batch_gt_depth)
                 depth, uncertainty, color = ret
             
-            # color.shape = (1000,3)
+
             depth_mask = (batch_gt_depth > 0)
-            
-            # depth loss
-            if True:
-            # if self.uncert:
-                loss = torch.mean((batch_gt_depth[depth_mask]-depth[depth_mask])**2)
-            else:
-                loss = torch.abs(batch_gt_depth[depth_mask]-depth[depth_mask]).mean()
-            
-            
             if ((not self.nice) or (self.stage == 'color')):
-                ###################### 수정
-                
-                #loss = torch.mean( 
-                #  (1 / (2*(uncert+1e-9))) * (pred.contiguous()-label) ** 2) 
-                #  + 0.5 * torch.mean(torch.log(uncert + 1e-9)) 
-                #  + (w * alpha.mean()) + 4
-                
-                # print(self.stage)
-                # print(joint_iter)
                 if self.uncert and self.uncert_stage:
-                    
-                    bias = 1e-9
-                    print("\nMinimum uncertainty : " + str(torch.min(uncertainty_ours + bias)))
-                    print("Maximum uncertainty : " + str(torch.max(uncertainty_ours + bias)))
-                    
-                    ####### ################ L1 ##############
-                    # color_loss = torch.mean( (1 / 2*((uncertainty_ours+bias).unsqueeze(-1))) * torch.abs((batch_gt_color - color)))
-                    # weighted_color_loss = self.w_color_loss * color_loss
-                    # loss += weighted_color_loss
-                    
-                    # ### 두번째 term
-                    # uncert_loss2 = 0.5 * (torch.log(bias + uncertainty_ours)).mean()
-                    # weighted_uncert_loss2 = self.w_color_loss * uncert_loss2
-                    # loss += weighted_uncert_loss2 
-                    
-                    # ### 세번째
-                    # occup_loss = 0.01 * (alpha).mean()
-                    # weighted_occup = self.w_color_loss * occup_loss
-                    # loss += weighted_occup
-                    # loss += 4.0
-                    
-                    ##################################################
-                    
-                    ####################### L2 ##############
-                    color_loss = torch.mean( (1 / (2*(uncertainty_ours+bias).unsqueeze(-1))) * ((batch_gt_color - color)**2))
+                    loss1 = torch.mean((1 / (2 * (uncertainty_ours[1][depth_mask]))) * ((batch_gt_depth[depth_mask]- depth[depth_mask]) ** 2))
+                    loss2 = 0.5 * (torch.log(+ uncertainty_ours[1])).mean()
+                    depth_uncert = loss1 + loss2
+
+                    loss_ori = torch.mean((batch_gt_depth[depth_mask] - depth[depth_mask]) ** 2)
+                    loss = 0.9 * loss_ori + 0.1 * depth_uncert
+
+                    # loss = torch.mean((batch_gt_depth[depth_mask] - depth[depth_mask]) ** 2)
+                else:
+                    loss = torch.mean((batch_gt_depth[depth_mask] - depth[depth_mask]) ** 2)
+
+            else:
+                loss = torch.mean((batch_gt_depth[depth_mask] - depth[depth_mask]) ** 2)
+
+
+            if ((not self.nice) or (self.stage == 'color')):
+
+                if self.uncert and self.uncert_stage:
+                    ###################### L2 ##############
+                    # uncert1_c_loss = torch.mean( (1 / (2*(uncertainty_ours[0]))) * ((batch_gt_color - color)**2))
+                    # uncert2_c_loss = 0.5 * (torch.log(uncertainty_ours[0])).mean()
+                    # uncert_c_loss = uncert1_c_loss + uncert2_c_loss
+                    # uncert_c_loss = self.w_color_loss * uncert_c_loss
+
+                    # color_loss = ((batch_gt_color - color)**2).mean()            
+                    # color_loss = self.w_color_loss * color_loss
+                    # print("color_loss: ", color_loss)
+                    # print("uncert_c_loss : ", uncert_c_loss )
+                    # loss += (0.99 * color_loss) + (0.01 * uncert_c_loss) 
+
+                    color_loss = ((batch_gt_color - color)**2).mean()            
                     weighted_color_loss = self.w_color_loss * color_loss
                     loss += weighted_color_loss
-                    
-                    ### 두번째 term
-                    uncert_loss2 = 0.5 * (torch.log(bias + uncertainty_ours)).mean()
-                    weighted_uncert_loss2 = self.w_color_loss * uncert_loss2
-                    loss += weighted_uncert_loss2
-                    
-                    ### 세번째
-                    occup_loss = 0.01 * (alpha).mean() + 4.0
-                    weighted_occup = self.w_color_loss * occup_loss
-                    loss += weighted_occup
-                    
-                    ##################################################
-                    
-                    # print(l1oss)
                 else:
-                    if True:
-                    # if self.uncert:
-                        color_loss = ((batch_gt_color - color)**2).mean()
-                    else:
-                        color_loss = torch.abs(batch_gt_color - color).mean()
-            
+                    color_loss = ((batch_gt_color - color)**2).mean()            
                     weighted_color_loss = self.w_color_loss * color_loss
                     loss += weighted_color_loss
 
@@ -637,6 +609,7 @@ class Mapper(object):
         self.estimate_c2w_list[0] = gt_c2w.cpu()
         init = True
         prev_idx = -1
+
         while (1):
             while True:
                 idx = self.idx[0].clone()
@@ -750,3 +723,131 @@ class Mapper(object):
 
             if idx == self.n_img-1:
                 break
+
+            # if idx >= 30:
+            #     break
+
+
+        ########################################
+        if not self.coarse_mapper:
+            output_dir = self.output
+            os.makedirs(output_dir, exist_ok=True)
+            os.makedirs(os.path.join(output_dir, 'rendered_image'), exist_ok=True)
+            if self.uncert:
+                os.makedirs(os.path.join(output_dir, 'uncertainty_image'), exist_ok=True)
+            cal_lpips = LearnedPerceptualImagePatchSimilarity(net_type='alex', normalize=True).to(self.device)
+
+            psnr_sum = 0
+            ssim_sum = 0
+            lpips_sum = 0
+            psnr_sum_5 = 0
+            ssim_sum_5 = 0
+            lpips_sum_5 = 0
+            psnr_sum_non_5 = 0
+            ssim_sum_non_5 = 0
+            lpips_sum_non_5 = 0
+            frame_cnt = 0
+            frame_cnt_5 = 0
+            frame_cnt_non_5 = 0
+
+            result_file = os.path.join(output_dir, 'result.txt')
+            with open(result_file, 'w') as f:
+                for frame_n in range(self.n_img):
+                    idx, gt_color, gt_depth, gt_c2w = self.frame_reader[frame_n]
+                    cur_c2w = self.estimate_c2w_list[frame_n].to(self.device)
+                    if self.uncert:
+                        depth, uncertainty, color, uncertainty_ours = self.renderer.render_img(
+                            self.c,
+                            self.decoders,
+                            cur_c2w,
+                            self.device,
+                            stage='color',
+                            gt_depth=gt_depth)
+                    else:
+                        depth, uncertainty, color = self.renderer.render_img(
+                            self.c,
+                            self.decoders,
+                            cur_c2w,
+                            self.device,
+                            stage='color',
+                            gt_depth=gt_depth)
+
+                    gt_color_np = gt_color.cpu().numpy().astype(np.float32)
+                    color_np = color.cpu().numpy().astype(np.float32)
+
+                    # Save rendered images every 100 frames
+                    if frame_n % 100 == 0:
+                        img = cv2.cvtColor(color_np * 255, cv2.COLOR_RGB2BGR)
+                        gt_img = cv2.cvtColor(gt_color_np * 255, cv2.COLOR_RGB2BGR)
+                        cv2.imwrite(os.path.join(output_dir, 'rendered_image', f'frame_{frame_n:05d}.png'), img)
+                        cv2.imwrite(os.path.join(output_dir, 'rendered_image', f'frame_{frame_n:05d}_gt.png'), gt_img)
+
+                        if self.uncert:
+                            uncertainty_ours_np0 = uncertainty_ours[0].cpu().numpy().astype(np.float32)
+                            uncertainty_ours_np1 = uncertainty_ours[1].cpu().numpy().astype(np.float32)
+                            uncertainty_ours_np0_normalized = uncertainty_ours_np0 / np.max(uncertainty_ours_np0)
+                            uncertainty_ours_np1_normalized = uncertainty_ours_np1 / np.max(uncertainty_ours_np1)
+                            
+                            uncertainty_ours_np0_normalized = np.clip(uncertainty_ours_np0_normalized, 0, 1)
+                            uncertainty_ours_np1_normalized = np.clip(uncertainty_ours_np1_normalized, 0, 1)
+                            
+                            uncert_img0 = (uncertainty_ours_np0_normalized * 255).astype(np.uint8)
+                            uncert_img1 = (uncertainty_ours_np1_normalized * 255).astype(np.uint8)
+         
+                            cv2.imwrite(os.path.join(output_dir, 'uncertainty_image', f'uncert_rgb_{frame_n:05d}.png'), uncert_img0)
+                            cv2.imwrite(os.path.join(output_dir, 'uncertainty_image', f'uncert_depth_{frame_n:05d}.png'), uncert_img1)
+
+
+                    # Calculate metrics
+                    mse_loss = torch.nn.functional.mse_loss(gt_color[gt_depth > 0], color[gt_depth > 0])
+                    psnr_frame = -10. * torch.log10(mse_loss)
+                    ssim_value = ms_ssim(gt_color.transpose(0, 2).unsqueeze(0).float(), color.transpose(0, 2).unsqueeze(0).float(), data_range=1.0, size_average=True)
+                    lpips_value = cal_lpips(torch.clamp(gt_color.unsqueeze(0).permute(0, 3, 1, 2).float(), 0.0, 1.0), torch.clamp(color.unsqueeze(0).permute(0, 3, 1, 2).float(), 0.0, 1.0)).item()
+
+                    psnr_sum += psnr_frame
+                    ssim_sum += ssim_value
+                    lpips_sum += lpips_value
+
+                    if frame_n % 5 == 0:
+                        psnr_sum_5 += psnr_frame
+                        ssim_sum_5 += ssim_value
+                        lpips_sum_5 += lpips_value
+                        frame_cnt_5 += 1
+                    else:
+                        psnr_sum_non_5 += psnr_frame
+                        ssim_sum_non_5 += ssim_value
+                        lpips_sum_non_5 += lpips_value
+                        frame_cnt_non_5 += 1
+
+                    f.write(f'Frame {frame_n:05d}: PSNR: {psnr_frame:.4f}, SSIM: {ssim_value:.4f}, LPIPS: {lpips_value:.4f}\n')
+
+                    frame_cnt += 1
+
+                # Calculate and print average metrics
+                avg_psnr = psnr_sum / frame_cnt
+                avg_ssim = ssim_sum / frame_cnt
+                avg_lpips = lpips_sum / frame_cnt
+
+                if frame_cnt_5 > 0:
+                    avg_psnr_5 = psnr_sum_5 / frame_cnt_5
+                    avg_ssim_5 = ssim_sum_5 / frame_cnt_5
+                    avg_lpips_5 = lpips_sum_5 / frame_cnt_5
+                else:
+                    avg_psnr_5 = avg_ssim_5 = avg_lpips_5 = 0
+
+                if frame_cnt_non_5 > 0:
+                    avg_psnr_non_5 = psnr_sum_non_5 / frame_cnt_non_5
+                    avg_ssim_non_5 = ssim_sum_non_5 / frame_cnt_non_5
+                    avg_lpips_non_5 = lpips_sum_non_5 / frame_cnt_non_5
+                else:
+                    avg_psnr_non_5 = avg_ssim_non_5 = avg_lpips_non_5 = 0
+
+                f.write(f'\nAverage (all frames): PSNR: {avg_psnr:.4f}, SSIM: {avg_ssim:.4f}, LPIPS: {avg_lpips:.4f}\n')
+                f.write(f'\nAverage (frame_n % 5 == 0): PSNR: {avg_psnr_5:.4f}, SSIM: {avg_ssim_5:.4f}, LPIPS: {avg_lpips_5:.4f}\n')
+                f.write(f'\nAverage (frame_n % 5 != 0): PSNR: {avg_psnr_non_5:.4f}, SSIM: {avg_ssim_non_5:.4f}, LPIPS: {avg_lpips_non_5:.4f}\n')
+
+            print(f'avg_ms_ssim: {avg_ssim}')
+            print(f'avg_psnr: {avg_psnr}')
+            print(f'avg_lpips: {avg_lpips}')
+
+            #########################################

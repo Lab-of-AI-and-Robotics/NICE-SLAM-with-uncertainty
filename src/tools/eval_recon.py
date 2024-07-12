@@ -7,6 +7,8 @@ import torch
 import trimesh
 from scipy.spatial import cKDTree as KDTree
 
+o3d.utility.set_verbosity_level(o3d.utility.VerbosityLevel.Error)
+
 
 def normalize(x):
     return x / np.linalg.norm(x)
@@ -24,7 +26,7 @@ def viewmatrix(z, up, pos):
 def completion_ratio(gt_points, rec_points, dist_th=0.05):
     gen_points_kd_tree = KDTree(rec_points)
     distances, _ = gen_points_kd_tree.query(gt_points)
-    comp_ratio = np.mean((distances < dist_th).astype(np.float))
+    comp_ratio = np.mean((distances < dist_th).astype(float))
     return comp_ratio
 
 
@@ -88,10 +90,9 @@ def check_proj(points, W, H, fx, fy, cx, cy, c2w):
     return mask.sum() > 0
 
 
-def calc_3d_metric(rec_meshfile, gt_meshfile, align=True):
+def calc_3d_metric(rec_meshfile, gt_meshfile, align=True, txt_file=None):
     """
     3D reconstruction metric.
-
     """
     mesh_rec = trimesh.load(rec_meshfile, process=False)
     mesh_gt = trimesh.load(gt_meshfile, process=False)
@@ -112,9 +113,17 @@ def calc_3d_metric(rec_meshfile, gt_meshfile, align=True):
     accuracy_rec *= 100  # convert to cm
     completion_rec *= 100  # convert to cm
     completion_ratio_rec *= 100  # convert to %
-    print('accuracy: ', accuracy_rec)
-    print('completion: ', completion_rec)
-    print('completion ratio: ', completion_ratio_rec)
+    
+    output = (
+        f'accuracy: {accuracy_rec}\n'
+        f'completion: {completion_rec}\n'
+        f'completion ratio: {completion_ratio_rec}\n'
+    )
+    print(output)
+    
+    if txt_file:
+        with open(txt_file, 'a') as f:
+            f.write(output)
 
 
 def get_cam_position(gt_meshfile):
@@ -127,11 +136,9 @@ def get_cam_position(gt_meshfile):
     transform[2, 3] += 0.4
     return extents, transform
 
-
-def calc_2d_metric(rec_meshfile, gt_meshfile, align=True, n_imgs=1000):
+def calc_2d_metric(rec_meshfile, gt_meshfile, align=True, n_imgs=1000, txt_file=None):
     """
     2D reconstruction metric, depth L1 loss.
-
     """
     H = 500
     W = 500
@@ -207,8 +214,12 @@ def calc_2d_metric(rec_meshfile, gt_meshfile, align=True, n_imgs=1000):
 
     errors = np.array(errors)
     # from m to cm
-    print('Depth L1: ', errors.mean()*100)
-
+    output = f'Depth L1: {errors.mean()*100}\n'
+    print(output)
+    
+    if txt_file:
+        with open(txt_file, 'a') as f:
+            f.write(output)
 
 if __name__ == '__main__':
 
@@ -223,9 +234,18 @@ if __name__ == '__main__':
                         action='store_true', help='enable 2D metric')
     parser.add_argument('-3d', '--metric_3d',
                         action='store_true', help='enable 3D metric')
+    parser.add_argument('-txt_name', type=str,
+                        help='storing information file path')
+    
     args = parser.parse_args()
+    
+    if args.txt_name:
+        txt_file = args.txt_name
+    else:
+        txt_file = None
+    
     if args.metric_3d:
-        calc_3d_metric(args.rec_mesh, args.gt_mesh)
+        calc_3d_metric(args.rec_mesh, args.gt_mesh, txt_file=txt_file)
 
     if args.metric_2d:
-        calc_2d_metric(args.rec_mesh, args.gt_mesh, n_imgs=1000)
+        calc_2d_metric(args.rec_mesh, args.gt_mesh, n_imgs=1000, txt_file=txt_file)
