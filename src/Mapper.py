@@ -9,7 +9,7 @@ from src.common import (get_camera_from_tensor, get_samples,
                         get_tensor_from_camera, random_select)
 from src.utils.datasets import get_dataset
 from src.utils.Visualizer import Visualizer
-
+import sys
 from pytorch_msssim import ms_ssim
 from torchmetrics.image.lpip import LearnedPerceptualImagePatchSimilarity
 from PIL import Image
@@ -21,21 +21,19 @@ class Mapper(object):
 
     """
 
-    def __init__(self, cfg, args, slam, coarse_mapper=False, uncert=False
-                 ):
+    def __init__(self, cfg, args, slam, coarse_mapper=False, uncert=False, slam_index = None, test_index = None):
 
         self.cfg = cfg
         self.args = args
         self.coarse_mapper = coarse_mapper
 
         ########### 수정
-        ### 
         self.uncert_stage = False
         self.uncert = uncert
-        # print(self.uncert)
+        self.slam_index = slam_index
+        self.test_index = test_index
         
         self.w_uncert_loss = cfg['mapping']['w_color_loss']
-        print(self.w_uncert_loss)
         self.output = cfg['data']['output']
         self.idx = slam.idx
         self.nice = slam.nice
@@ -92,9 +90,22 @@ class Mapper(object):
 
         self.keyframe_dict = []
         self.keyframe_list = []
-        self.frame_reader = get_dataset(
-            cfg, args, self.scale, device=self.device)
+        
+        # ############################ fororiginal data setting ############################
+        # self.frame_reader = get_dataset(cfg, args, self.scale, device=self.device)
+        # self.n_img = len(self.frame_reader)
+        # ############################ fororiginal data setting ############################
+
+
+        ########################### for custom data setting ############################
+        # 데이터셋 로드 및 분할
+        self.frame_reader = get_dataset(cfg, args, self.scale, device=self.device)
         self.n_img = len(self.frame_reader)
+        self.slam_index = slam_index if slam_index is not None else [0, len(self.frame_reader) - 1]
+        self.test_index = test_index if test_index is not None else [0, len(self.frame_reader) - 1]
+
+        # ############################ for custom data setting ############################
+
         if 'Demo' not in self.output:  # disable this visualization in demo
             self.visualizer = Visualizer(freq=cfg['mapping']['vis_freq'], inside_freq=cfg['mapping']['vis_inside_freq'],
                                          vis_dir=os.path.join(self.output, 'mapping_vis'), renderer=self.renderer,
@@ -521,7 +532,7 @@ class Mapper(object):
                     depth_uncert = loss1 + loss2
 
                     loss_ori = torch.mean((batch_gt_depth[depth_mask] - depth[depth_mask]) ** 2)
-                    loss = 0.9 * loss_ori + 0.1 * depth_uncert
+                    loss = 0.95 * loss_ori + 0.05 * depth_uncert
 
                     # loss = torch.mean((batch_gt_depth[depth_mask] - depth[depth_mask]) ** 2)
                 else:
@@ -544,7 +555,7 @@ class Mapper(object):
                     # color_loss = self.w_color_loss * color_loss
                     # print("color_loss: ", color_loss)
                     # print("uncert_c_loss : ", uncert_c_loss )
-                    # loss += (0.99 * color_loss) + (0.01 * uncert_c_loss) 
+                    # loss += (0.999 * color_loss)  + (0.001 * uncert_c_loss) 
 
                     color_loss = ((batch_gt_color - color)**2).mean()            
                     weighted_color_loss = self.w_color_loss * color_loss
@@ -602,25 +613,149 @@ class Mapper(object):
         else:
             return None
 
+    # def run(self):
+    #     cfg = self.cfg
+    #     idx, gt_color, gt_depth, gt_c2w = self.frame_reader[self.slam_index[0]]
+
+    #     self.estimate_c2w_list[self.slam_index[0]] = gt_c2w.cpu()
+    #     init = True
+    #     prev_idx = -1
+
+    #     while (1):
+    #         while True:
+    #             idx = self.idx[0].clone()
+    #             if idx == self.slam_index[1]:
+    #                 break
+    #             if self.sync_method == 'strict':
+    #                 if idx % self.every_frame == 0 and idx != prev_idx:
+    #                     break
+
+    #             elif self.sync_method == 'loose':
+    #                 if idx == self.slam_index[0] or idx >= prev_idx+self.every_frame//2:
+    #                     break
+    #             elif self.sync_method == 'free':
+    #                 break
+    #             time.sleep(0.1)
+    #         prev_idx = idx
+
+    #         if self.verbose:
+    #             print(Fore.GREEN)
+    #             prefix = 'Coarse ' if self.coarse_mapper else ''
+    #             print(prefix+"Mapping Frame ", idx.item())
+    #             print(Style.RESET_ALL)
+
+    #         _, gt_color, gt_depth, gt_c2w = self.frame_reader[idx]
+
+    #         if not init:
+    #             lr_factor = cfg['mapping']['lr_factor']
+    #             num_joint_iters = cfg['mapping']['iters']
+
+    #             # here provides a color refinement postprocess
+    #             if idx == self.slam_index[1] and self.color_refine and not self.coarse_mapper:
+    #                 outer_joint_iters = 5
+    #                 self.mapping_window_size *= 2
+    #                 self.middle_iter_ratio = 0.0
+    #                 self.fine_iter_ratio = 0.0
+    #                 num_joint_iters *= 5
+    #                 self.fix_color = True
+    #                 self.frustum_feature_selection = False
+    #             else:
+    #                 if self.nice:
+    #                     outer_joint_iters = 1
+    #                 else:
+    #                     outer_joint_iters = 3
+
+    #         else:
+    #             outer_joint_iters = 1
+    #             lr_factor = cfg['mapping']['lr_first_factor']
+    #             num_joint_iters = cfg['mapping']['iters_first']
+
+    #         cur_c2w = self.estimate_c2w_list[idx].to(self.device)
+    #         num_joint_iters = num_joint_iters//outer_joint_iters
+            
+    #         if self.low_gpu_mem:
+    #             torch.cuda.empty_cache()
+            
+    #         for outer_joint_iter in range(outer_joint_iters):
+                
+    #             self.BA = (len(self.keyframe_list) > 4) and cfg['mapping']['BA'] and (
+    #                 not self.coarse_mapper)
+
+    #             _ = self.optimize_map(num_joint_iters, lr_factor, idx, gt_color, gt_depth,
+    #                                   gt_c2w, self.keyframe_dict, self.keyframe_list, cur_c2w=cur_c2w)
+    #             if self.BA:
+    #                 cur_c2w = _
+    #                 self.estimate_c2w_list[idx] = cur_c2w
+
+    #             # add new frame to keyframe set
+    #             if outer_joint_iter == outer_joint_iters-1:
+    #                 if (idx % self.keyframe_every == 0 or (idx == self.slam_index[1]-1)) \
+    #                         and (idx not in self.keyframe_list):
+    #                     self.keyframe_list.append(idx)
+    #                     self.keyframe_dict.append({'gt_c2w': gt_c2w.cpu(), 'idx': idx, 'color': gt_color.cpu(
+    #                     ), 'depth': gt_depth.cpu(), 'est_c2w': cur_c2w.clone()})
+
+    #         if self.low_gpu_mem:
+    #             torch.cuda.empty_cache()
+
+    #         init = False
+    #         # mapping of first frame is done, can begin tracking
+    #         self.mapping_first_frame[0] = 1
+
+    #         if not self.coarse_mapper:
+    #             if ((not (idx == self.slam_index[0] and self.no_log_on_first_frame)) and idx % self.ckpt_freq == 0) \
+    #                     or idx == self.slam_index[1]:
+    #                 self.logger.log(idx, self.keyframe_dict, self.keyframe_list,
+    #                                 selected_keyframes=self.selected_keyframes
+    #                                 if self.save_selected_keyframes_info else None)
+
+    #             self.mapping_idx[0] = idx
+    #             self.mapping_cnt[0] += 1
+
+    #             if (idx % self.mesh_freq == 0) and (not (idx == self.slam_index[0] and self.no_mesh_on_first_frame)):
+    #                 mesh_out_file = f'{self.output}/mesh/{idx:05d}_mesh.ply'
+    #                 self.mesher.get_mesh(mesh_out_file, self.c, self.decoders, self.keyframe_dict, self.estimate_c2w_list,
+    #                                      idx,  self.device, show_forecast=self.mesh_coarse_level,
+    #                                      clean_mesh=self.clean_mesh, get_mask_use_all_frames=False)
+
+    #             if idx == self.slam_index[1]:
+    #                 mesh_out_file = f'{self.output}/mesh/final_mesh.ply'
+    #                 self.mesher.get_mesh(mesh_out_file, self.c, self.decoders, self.keyframe_dict, self.estimate_c2w_list,
+    #                                      idx,  self.device, show_forecast=self.mesh_coarse_level,
+    #                                      clean_mesh=self.clean_mesh, get_mask_use_all_frames=False)
+    #                 os.system(
+    #                     f"cp {mesh_out_file} {self.output}/mesh/{idx:05d}_mesh.ply")
+    #                 if self.eval_rec:
+    #                     mesh_out_file = f'{self.output}/mesh/final_mesh_eval_rec.ply'
+    #                     self.mesher.get_mesh(mesh_out_file, self.c, self.decoders, self.keyframe_dict,
+    #                                          self.estimate_c2w_list, idx, self.device, show_forecast=False,
+    #                                          clean_mesh=self.clean_mesh, get_mask_use_all_frames=True)
+    #                 break
+
+    #         if idx == self.slam_index[1]:
+    #             break
+
     def run(self):
         cfg = self.cfg
-        idx, gt_color, gt_depth, gt_c2w = self.frame_reader[0]
-
-        self.estimate_c2w_list[0] = gt_c2w.cpu()
+        init_idx = self.slam_index[0]
+        end_idx = self.slam_index[1]
+        
+        # 초기 프레임 로드 및 초기 카메라 행렬 설정
+        _, gt_color, gt_depth, gt_c2w = self.frame_reader[init_idx]
+        self.estimate_c2w_list[init_idx] = gt_c2w.cpu()
         init = True
         prev_idx = -1
 
         while (1):
             while True:
                 idx = self.idx[0].clone()
-                if idx == self.n_img-1:
+                if idx == end_idx:
                     break
                 if self.sync_method == 'strict':
                     if idx % self.every_frame == 0 and idx != prev_idx:
                         break
-
                 elif self.sync_method == 'loose':
-                    if idx == 0 or idx >= prev_idx+self.every_frame//2:
+                    if idx == init_idx or idx >= prev_idx + self.every_frame // 2:
                         break
                 elif self.sync_method == 'free':
                     break
@@ -630,7 +765,7 @@ class Mapper(object):
             if self.verbose:
                 print(Fore.GREEN)
                 prefix = 'Coarse ' if self.coarse_mapper else ''
-                print(prefix+"Mapping Frame ", idx.item())
+                print(prefix + "Mapping Frame ", idx.item())
                 print(Style.RESET_ALL)
 
             _, gt_color, gt_depth, gt_c2w = self.frame_reader[idx]
@@ -639,8 +774,7 @@ class Mapper(object):
                 lr_factor = cfg['mapping']['lr_factor']
                 num_joint_iters = cfg['mapping']['iters']
 
-                # here provides a color refinement postprocess
-                if idx == self.n_img-1 and self.color_refine and not self.coarse_mapper:
+                if idx == end_idx and self.color_refine and not self.coarse_mapper:
                     outer_joint_iters = 5
                     self.mapping_window_size *= 2
                     self.middle_iter_ratio = 0.0
@@ -649,10 +783,7 @@ class Mapper(object):
                     self.fix_color = True
                     self.frustum_feature_selection = False
                 else:
-                    if self.nice:
-                        outer_joint_iters = 1
-                    else:
-                        outer_joint_iters = 3
+                    outer_joint_iters = 1 if self.nice else 3
 
             else:
                 outer_joint_iters = 1
@@ -660,72 +791,52 @@ class Mapper(object):
                 num_joint_iters = cfg['mapping']['iters_first']
 
             cur_c2w = self.estimate_c2w_list[idx].to(self.device)
-            num_joint_iters = num_joint_iters//outer_joint_iters
-            
+            num_joint_iters = num_joint_iters // outer_joint_iters
+
             if self.low_gpu_mem:
                 torch.cuda.empty_cache()
-            
-            for outer_joint_iter in range(outer_joint_iters):
-                
-                self.BA = (len(self.keyframe_list) > 4) and cfg['mapping']['BA'] and (
-                    not self.coarse_mapper)
 
-                _ = self.optimize_map(num_joint_iters, lr_factor, idx, gt_color, gt_depth,
-                                      gt_c2w, self.keyframe_dict, self.keyframe_list, cur_c2w=cur_c2w)
+            for outer_joint_iter in range(outer_joint_iters):
+                self.BA = (len(self.keyframe_list) > 4) and cfg['mapping']['BA'] and (not self.coarse_mapper)
+
+                _ = self.optimize_map(num_joint_iters, lr_factor, idx, gt_color, gt_depth, gt_c2w, self.keyframe_dict, self.keyframe_list, cur_c2w=cur_c2w)
                 if self.BA:
                     cur_c2w = _
                     self.estimate_c2w_list[idx] = cur_c2w
 
-                # add new frame to keyframe set
-                if outer_joint_iter == outer_joint_iters-1:
-                    if (idx % self.keyframe_every == 0 or (idx == self.n_img-2)) \
-                            and (idx not in self.keyframe_list):
+                if outer_joint_iter == outer_joint_iters - 1:
+                    if (idx % self.keyframe_every == 0 or (idx == end_idx - 1)) and (idx not in self.keyframe_list):
                         self.keyframe_list.append(idx)
-                        self.keyframe_dict.append({'gt_c2w': gt_c2w.cpu(), 'idx': idx, 'color': gt_color.cpu(
-                        ), 'depth': gt_depth.cpu(), 'est_c2w': cur_c2w.clone()})
+                        self.keyframe_dict.append({'gt_c2w': gt_c2w.cpu(), 'idx': idx, 'color': gt_color.cpu(), 'depth': gt_depth.cpu(), 'est_c2w': cur_c2w.clone()})
 
             if self.low_gpu_mem:
                 torch.cuda.empty_cache()
 
             init = False
-            # mapping of first frame is done, can begin tracking
             self.mapping_first_frame[0] = 1
 
             if not self.coarse_mapper:
-                if ((not (idx == 0 and self.no_log_on_first_frame)) and idx % self.ckpt_freq == 0) \
-                        or idx == self.n_img-1:
-                    self.logger.log(idx, self.keyframe_dict, self.keyframe_list,
-                                    selected_keyframes=self.selected_keyframes
-                                    if self.save_selected_keyframes_info else None)
+                if ((not (idx == init_idx and self.no_log_on_first_frame)) and idx % self.ckpt_freq == 0) or idx == end_idx:
+                    self.logger.log(idx, self.keyframe_dict, self.keyframe_list, selected_keyframes=self.selected_keyframes if self.save_selected_keyframes_info else None)
 
                 self.mapping_idx[0] = idx
                 self.mapping_cnt[0] += 1
 
-                if (idx % self.mesh_freq == 0) and (not (idx == 0 and self.no_mesh_on_first_frame)):
+                if (idx % self.mesh_freq == 0) and (not (idx == init_idx and self.no_mesh_on_first_frame)):
                     mesh_out_file = f'{self.output}/mesh/{idx:05d}_mesh.ply'
-                    self.mesher.get_mesh(mesh_out_file, self.c, self.decoders, self.keyframe_dict, self.estimate_c2w_list,
-                                         idx,  self.device, show_forecast=self.mesh_coarse_level,
-                                         clean_mesh=self.clean_mesh, get_mask_use_all_frames=False)
+                    self.mesher.get_mesh(mesh_out_file, self.c, self.decoders, self.keyframe_dict, self.estimate_c2w_list, idx, self.device, show_forecast=self.mesh_coarse_level, clean_mesh=self.clean_mesh, get_mask_use_all_frames=False)
 
-                if idx == self.n_img-1:
+                if idx == end_idx:
                     mesh_out_file = f'{self.output}/mesh/final_mesh.ply'
-                    self.mesher.get_mesh(mesh_out_file, self.c, self.decoders, self.keyframe_dict, self.estimate_c2w_list,
-                                         idx,  self.device, show_forecast=self.mesh_coarse_level,
-                                         clean_mesh=self.clean_mesh, get_mask_use_all_frames=False)
-                    os.system(
-                        f"cp {mesh_out_file} {self.output}/mesh/{idx:05d}_mesh.ply")
+                    self.mesher.get_mesh(mesh_out_file, self.c, self.decoders, self.keyframe_dict, self.estimate_c2w_list, idx, self.device, show_forecast=self.mesh_coarse_level, clean_mesh=self.clean_mesh, get_mask_use_all_frames=False)
+                    os.system(f"cp {mesh_out_file} {self.output}/mesh/{idx:05d}_mesh.ply")
                     if self.eval_rec:
                         mesh_out_file = f'{self.output}/mesh/final_mesh_eval_rec.ply'
-                        self.mesher.get_mesh(mesh_out_file, self.c, self.decoders, self.keyframe_dict,
-                                             self.estimate_c2w_list, idx, self.device, show_forecast=False,
-                                             clean_mesh=self.clean_mesh, get_mask_use_all_frames=True)
+                        self.mesher.get_mesh(mesh_out_file, self.c, self.decoders, self.keyframe_dict, self.estimate_c2w_list, idx, self.device, show_forecast=False, clean_mesh=self.clean_mesh, get_mask_use_all_frames=True)
                     break
 
-            if idx == self.n_img-1:
+            if idx == end_idx:
                 break
-
-            # if idx >= 30:
-            #     break
 
 
         ########################################
@@ -752,9 +863,12 @@ class Mapper(object):
 
             result_file = os.path.join(output_dir, 'result.txt')
             with open(result_file, 'w') as f:
-                for frame_n in range(self.n_img):
-                    idx, gt_color, gt_depth, gt_c2w = self.frame_reader[frame_n]
+                print("txt file open")
+                for frame_n in range(self.test_index[0], self.test_index[1] + 1):
+                    idx = frame_n - self.test_index[0]
+                    _, gt_color, gt_depth, gt_c2w = self.frame_reader[frame_n]
                     cur_c2w = self.estimate_c2w_list[frame_n].to(self.device)
+                    cur_c2w = gt_c2w  # only for test unobserved view
                     if self.uncert:
                         depth, uncertainty, color, uncertainty_ours = self.renderer.render_img(
                             self.c,
@@ -775,8 +889,7 @@ class Mapper(object):
                     gt_color_np = gt_color.cpu().numpy().astype(np.float32)
                     color_np = color.cpu().numpy().astype(np.float32)
 
-                    # Save rendered images every 100 frames
-                    if frame_n % 100 == 0:
+                    if frame_n % 50 == 0:
                         img = cv2.cvtColor(color_np * 255, cv2.COLOR_RGB2BGR)
                         gt_img = cv2.cvtColor(gt_color_np * 255, cv2.COLOR_RGB2BGR)
                         cv2.imwrite(os.path.join(output_dir, 'rendered_image', f'frame_{frame_n:05d}.png'), img)
@@ -785,18 +898,23 @@ class Mapper(object):
                         if self.uncert:
                             uncertainty_ours_np0 = uncertainty_ours[0].cpu().numpy().astype(np.float32)
                             uncertainty_ours_np1 = uncertainty_ours[1].cpu().numpy().astype(np.float32)
+                            uncertainty_ours_np2 = uncertainty_ours[2].cpu().numpy().astype(np.float32)
                             uncertainty_ours_np0_normalized = uncertainty_ours_np0 / np.max(uncertainty_ours_np0)
                             uncertainty_ours_np1_normalized = uncertainty_ours_np1 / np.max(uncertainty_ours_np1)
+                            uncertainty_ours_np2_normalized = uncertainty_ours_np2 / np.max(uncertainty_ours_np2)
                             
                             uncertainty_ours_np0_normalized = np.clip(uncertainty_ours_np0_normalized, 0, 1)
                             uncertainty_ours_np1_normalized = np.clip(uncertainty_ours_np1_normalized, 0, 1)
+                            uncertainty_ours_np2_normalized = np.clip(uncertainty_ours_np2_normalized, 0, 1)
                             
                             uncert_img0 = (uncertainty_ours_np0_normalized * 255).astype(np.uint8)
                             uncert_img1 = (uncertainty_ours_np1_normalized * 255).astype(np.uint8)
-         
+                            uncert_img2 = (uncertainty_ours_np2_normalized * 255).astype(np.uint8)
+    
                             cv2.imwrite(os.path.join(output_dir, 'uncertainty_image', f'uncert_rgb_{frame_n:05d}.png'), uncert_img0)
                             cv2.imwrite(os.path.join(output_dir, 'uncertainty_image', f'uncert_depth_{frame_n:05d}.png'), uncert_img1)
-
+                            cv2.imwrite(os.path.join(output_dir, 'uncertainty_image', f'uncert_pure_{frame_n:05d}.png'), uncert_img2)
+                            print("saved uncert image")
 
                     # Calculate metrics
                     mse_loss = torch.nn.functional.mse_loss(gt_color[gt_depth > 0], color[gt_depth > 0])
@@ -851,3 +969,136 @@ class Mapper(object):
             print(f'avg_lpips: {avg_lpips}')
 
             #########################################
+
+
+
+        # ########################################
+        # if not self.coarse_mapper:
+        #     output_dir = self.output
+        #     os.makedirs(output_dir, exist_ok=True)
+        #     os.makedirs(os.path.join(output_dir, 'rendered_image'), exist_ok=True)
+        #     if self.uncert:
+        #         os.makedirs(os.path.join(output_dir, 'uncertainty_image'), exist_ok=True)
+        #     cal_lpips = LearnedPerceptualImagePatchSimilarity(net_type='alex', normalize=True).to(self.device)
+
+        #     psnr_sum = 0
+        #     ssim_sum = 0
+        #     lpips_sum = 0
+        #     psnr_sum_5 = 0
+        #     ssim_sum_5 = 0
+        #     lpips_sum_5 = 0
+        #     psnr_sum_non_5 = 0
+        #     ssim_sum_non_5 = 0
+        #     lpips_sum_non_5 = 0
+        #     frame_cnt = 0
+        #     frame_cnt_5 = 0
+        #     frame_cnt_non_5 = 0
+
+        #     result_file = os.path.join(output_dir, 'result.txt')
+        #     with open(result_file, 'w') as f:
+        #         print("txt file open")
+        #         for frame_n in range(len(self.test_img)):
+        #             idx, gt_color, gt_depth, gt_c2w = self.test_img[frame_n]
+        #             cur_c2w = self.estimate_c2w_list[frame_n].to(self.device)
+        #             cur_c2w = gt_c2w # only for test unobserved view
+        #             if self.uncert:
+        #                 depth, uncertainty, color, uncertainty_ours = self.renderer.render_img(
+        #                     self.c,
+        #                     self.decoders,
+        #                     cur_c2w,
+        #                     self.device,
+        #                     stage='color',
+        #                     gt_depth=gt_depth)
+        #             else:
+        #                 depth, uncertainty, color = self.renderer.render_img(
+        #                     self.c,
+        #                     self.decoders,
+        #                     cur_c2w,
+        #                     self.device,
+        #                     stage='color',
+        #                     gt_depth=gt_depth)
+
+        #             gt_color_np = gt_color.cpu().numpy().astype(np.float32)
+        #             color_np = color.cpu().numpy().astype(np.float32)
+
+        #             if frame_n % 100 == 0:
+        #                 img = cv2.cvtColor(color_np * 255, cv2.COLOR_RGB2BGR)
+        #                 gt_img = cv2.cvtColor(gt_color_np * 255, cv2.COLOR_RGB2BGR)
+        #                 cv2.imwrite(os.path.join(output_dir, 'rendered_image', f'frame_{frame_n:05d}.png'), img)
+        #                 cv2.imwrite(os.path.join(output_dir, 'rendered_image', f'frame_{frame_n:05d}_gt.png'), gt_img)
+
+        #                 if self.uncert:
+
+        #                     uncertainty_ours_np0 = uncertainty_ours[0].cpu().numpy().astype(np.float32)
+        #                     uncertainty_ours_np1 = uncertainty_ours[1].cpu().numpy().astype(np.float32)
+        #                     uncertainty_ours_np2 = uncertainty_ours[2].cpu().numpy().astype(np.float32)
+        #                     uncertainty_ours_np0_normalized = uncertainty_ours_np0 / np.max(uncertainty_ours_np0)
+        #                     uncertainty_ours_np1_normalized = uncertainty_ours_np1 / np.max(uncertainty_ours_np1)
+        #                     uncertainty_ours_np2_normalized = uncertainty_ours_np2 / np.max(uncertainty_ours_np2)
+                            
+        #                     uncertainty_ours_np0_normalized = np.clip(uncertainty_ours_np0_normalized, 0, 1)
+        #                     uncertainty_ours_np1_normalized = np.clip(uncertainty_ours_np1_normalized, 0, 1)
+        #                     uncertainty_ours_np2_normalized = np.clip(uncertainty_ours_np2_normalized, 0, 1)
+                            
+        #                     uncert_img0 = (uncertainty_ours_np0_normalized * 255).astype(np.uint8)
+        #                     uncert_img1 = (uncertainty_ours_np1_normalized * 255).astype(np.uint8)
+        #                     uncert_img2 = (uncertainty_ours_np2_normalized * 255).astype(np.uint8)
+    
+        #                     cv2.imwrite(os.path.join(output_dir, 'uncertainty_image', f'uncert_rgb_{frame_n:05d}.png'), uncert_img0)
+        #                     cv2.imwrite(os.path.join(output_dir, 'uncertainty_image', f'uncert_depth_{frame_n:05d}.png'), uncert_img1)
+        #                     cv2.imwrite(os.path.join(output_dir, 'uncertainty_image', f'uncert_pure_{frame_n:05d}.png'), uncert_img2)
+        #                     print("saved uncert image")
+
+        #             # Calculate metrics
+        #             mse_loss = torch.nn.functional.mse_loss(gt_color[gt_depth > 0], color[gt_depth > 0])
+        #             psnr_frame = -10. * torch.log10(mse_loss)
+        #             ssim_value = ms_ssim(gt_color.transpose(0, 2).unsqueeze(0).float(), color.transpose(0, 2).unsqueeze(0).float(), data_range=1.0, size_average=True)
+        #             lpips_value = cal_lpips(torch.clamp(gt_color.unsqueeze(0).permute(0, 3, 1, 2).float(), 0.0, 1.0), torch.clamp(color.unsqueeze(0).permute(0, 3, 1, 2).float(), 0.0, 1.0)).item()
+
+        #             psnr_sum += psnr_frame
+        #             ssim_sum += ssim_value
+        #             lpips_sum += lpips_value
+
+        #             if frame_n % 5 == 0:
+        #                 psnr_sum_5 += psnr_frame
+        #                 ssim_sum_5 += ssim_value
+        #                 lpips_sum_5 += lpips_value
+        #                 frame_cnt_5 += 1
+        #             else:
+        #                 psnr_sum_non_5 += psnr_frame
+        #                 ssim_sum_non_5 += ssim_value
+        #                 lpips_sum_non_5 += lpips_value
+        #                 frame_cnt_non_5 += 1
+
+        #             f.write(f'Frame {frame_n:05d}: PSNR: {psnr_frame:.4f}, SSIM: {ssim_value:.4f}, LPIPS: {lpips_value:.4f}\n')
+
+        #             frame_cnt += 1
+
+        #         # Calculate and print average metrics
+        #         avg_psnr = psnr_sum / frame_cnt
+        #         avg_ssim = ssim_sum / frame_cnt
+        #         avg_lpips = lpips_sum / frame_cnt
+
+        #         if frame_cnt_5 > 0:
+        #             avg_psnr_5 = psnr_sum_5 / frame_cnt_5
+        #             avg_ssim_5 = ssim_sum_5 / frame_cnt_5
+        #             avg_lpips_5 = lpips_sum_5 / frame_cnt_5
+        #         else:
+        #             avg_psnr_5 = avg_ssim_5 = avg_lpips_5 = 0
+
+        #         if frame_cnt_non_5 > 0:
+        #             avg_psnr_non_5 = psnr_sum_non_5 / frame_cnt_non_5
+        #             avg_ssim_non_5 = ssim_sum_non_5 / frame_cnt_non_5
+        #             avg_lpips_non_5 = lpips_sum_non_5 / frame_cnt_non_5
+        #         else:
+        #             avg_psnr_non_5 = avg_ssim_non_5 = avg_lpips_non_5 = 0
+
+        #         f.write(f'\nAverage (all frames): PSNR: {avg_psnr:.4f}, SSIM: {avg_ssim:.4f}, LPIPS: {avg_lpips:.4f}\n')
+        #         f.write(f'\nAverage (frame_n % 5 == 0): PSNR: {avg_psnr_5:.4f}, SSIM: {avg_ssim_5:.4f}, LPIPS: {avg_lpips_5:.4f}\n')
+        #         f.write(f'\nAverage (frame_n % 5 != 0): PSNR: {avg_psnr_non_5:.4f}, SSIM: {avg_ssim_non_5:.4f}, LPIPS: {avg_lpips_non_5:.4f}\n')
+
+        #     print(f'avg_ms_ssim: {avg_ssim}')
+        #     print(f'avg_psnr: {avg_psnr}')
+        #     print(f'avg_lpips: {avg_lpips}')
+
+        #     #########################################

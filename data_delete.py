@@ -24,8 +24,8 @@ def remove_images_and_update_traj(image_dir, traj_file, num):
                 file.write(line)
 
 # Usage
-image_dir = 'Datasets/Replica/room2/results'  # 이미지 폴더 경로
-traj_file = 'Datasets/Replica/room2/traj.txt'  # traj.txt 파일 경로
-num = 10  # 나머지가 1인 숫자의 배수만 남김
+image_dir = 'Datasets_2/Replica/office4/results'  # 이미지 폴더 경로
+traj_file = 'Datasets_2/Replica/office4/traj.txt'  # traj.txt 파일 경로
+num = 2  # 나머지가 1인 숫자의 배수만 남김
 
 remove_images_and_update_traj(image_dir, traj_file, num)

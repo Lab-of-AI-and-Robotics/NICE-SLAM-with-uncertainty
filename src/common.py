@@ -310,7 +310,8 @@ def raw2outputs_nerf_uncert(raw, z_vals, rays_d, occupancy=False, device='cuda:0
     uncertainty_copy = uncertainty.unsqueeze(-1).expand(-1, -1, 3)
     uncertainty_for_rgb = torch.sum(Ti_copy * Ti_copy * rgb * rgb * uncertainty_copy, -2)
     uncertainty_for_depth = torch.sum(Ti * Ti * z_vals *z_vals * uncertainty, -1)
-    uncertainty_ours = [uncertainty_for_rgb, uncertainty_for_depth]
+    uncertainty_pure = torch.sum(uncertainty, -1)
+    uncertainty_ours = [uncertainty_for_rgb, uncertainty_for_depth, uncertainty_pure]
 
 
     ##################### uncert ########################

@@ -214,7 +214,7 @@ class Renderer(object):
             depth, uncertainty_, color, weights = raw2outputs_nerf_color(
                     raw, z_vals, rays_d, occupancy=self.occupancy, device=device, sigmoid=self.sigmoid)
         
-        
+
         if N_importance > 0:
             z_vals_mid = .5 * (z_vals[..., 1:] + z_vals[..., :-1])
             z_samples = sample_pdf(
@@ -278,6 +278,7 @@ class Renderer(object):
             ################## 수정
             uncertainty_ours_list0 = []
             uncertainty_ours_list1 = []
+            uncertainty_ours_list2 = []
 
             ray_batch_size = self.ray_batch_size
             gt_depth = gt_depth.reshape(-1)
@@ -298,6 +299,7 @@ class Renderer(object):
                     ############ 수정, 추가
                     uncertainty_ours_list0.append(uncertainty_ours[0].double())
                     uncertainty_ours_list1.append(uncertainty_ours[1].double())
+                    uncertainty_ours_list2.append(uncertainty_ours[2].double())
                 else:
                     ######### 원본
                     depth, uncertainty, color = ret
@@ -311,6 +313,7 @@ class Renderer(object):
             if self.uncert:
                 uncertainty_ours0 = torch.cat(uncertainty_ours_list0, dim=0)
                 uncertainty_ours1 = torch.cat(uncertainty_ours_list1, dim=0)
+                uncertainty_ours2 = torch.cat(uncertainty_ours_list2, dim=0)
 
             depth = depth.reshape(H, W)
             uncertainty = uncertainty.reshape(H, W)
@@ -320,7 +323,8 @@ class Renderer(object):
                 # uncertainty_ours = uncertainty_ours.reshape(H, W, 3)
                 uncertainty_ours0 = uncertainty_ours0.reshape(H, W, 3)
                 uncertainty_ours1 = uncertainty_ours1.reshape(H, W)
-                uncertainty_ours = [uncertainty_ours0, uncertainty_ours1]
+                uncertainty_ours2 = uncertainty_ours2.reshape(H, W)
+                uncertainty_ours = [uncertainty_ours0, uncertainty_ours1, uncertainty_ours2]
                 return depth, uncertainty, color, uncertainty_ours
             else:
                 return depth, uncertainty, color

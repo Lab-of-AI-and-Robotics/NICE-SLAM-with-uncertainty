@@ -113,6 +113,8 @@ class BaseDataset(Dataset):
         return index, color_data.to(self.device), depth_data.to(self.device), pose.to(self.device)
 
 
+
+
 class Replica(BaseDataset):
     def __init__(self, cfg, args, scale, device='cuda:0'
                  ):
@@ -123,6 +125,8 @@ class Replica(BaseDataset):
             glob.glob(f'{self.input_folder}/results/depth*.png'))
         self.n_img = len(self.color_paths)
         self.load_poses(f'{self.input_folder}/traj.txt')
+
+
 
     def load_poses(self, path):
         self.poses = []

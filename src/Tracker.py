@@ -16,11 +16,10 @@ from src.utils.Visualizer import Visualizer
 
 
 class Tracker(object):
-    def __init__(self, cfg, args, slam, uncert=False
-                 ):
+    def __init__(self, cfg, args, slam, uncert=False, slam_index = None):
         self.cfg = cfg
         self.args = args
-
+        self.slam_index = slam_index
         self.uncert = uncert
         self.scale = cfg['scale']
         self.coarse = cfg['coarse']
@@ -59,9 +58,34 @@ class Tracker(object):
         self.no_vis_on_first_frame = cfg['mapping']['no_vis_on_first_frame']
 
         self.prev_mapping_idx = -1
-        self.frame_reader = get_dataset(
-            cfg, args, self.scale, device=self.device)
+
+        # ############################ fororiginal data setting ############################
+        # self.frame_reader = get_dataset(cfg, args, self.scale, device=self.device)
+        # self.n_img = len(self.frame_reader)
+        # ############################ fororiginal data setting ############################
+
+
+        self.frame_reader = get_dataset(cfg, args, self.scale, device=self.device) 
         self.n_img = len(self.frame_reader)
+        self.slam_index = slam_index if slam_index is not None else [0, len(self.frame_reader) - 1]
+
+        # if slam_index is not None:
+        #     self.frame_reader = []
+        #     for i in range(slam_index[0], min(slam_index[1] + 1, self.n_img)):
+        #         data = full_frame_reader[i]
+        #         self.frame_reader.append((i - slam_index[0], data[1], data[2], data[3]))
+        # else:
+        #     self.frame_reader = full_frame_reader
+
+        # self.n_img = len(self.frame_reader)
+
+
+        # print("slam index: ", slam_index)
+        # print("len slam: ", len(self.frame_reader))
+
+
+        # ############################ for custom data setting ############################
+
         self.frame_loader = DataLoader(
             self.frame_reader, batch_size=1, shuffle=False, num_workers=0)
         self.visualizer = Visualizer(freq=cfg['tracking']['vis_freq'], inside_freq=cfg['tracking']['vis_inside_freq'],
@@ -116,54 +140,22 @@ class Tracker(object):
         if self.handle_dynamic:
             tmp = torch.abs(batch_gt_depth-depth)/torch.sqrt(uncertainty+1e-10)
             mask = (tmp < 10*tmp.median()) & (batch_gt_depth > 0)
-            # mask = batch_gt_depth > 0
         else:
             mask = batch_gt_depth > 0
         
-
         if self.uncert:
-            # loss1 = torch.mean((1 / (2 * (uncertainty_ours[1][mask]))) * ((batch_gt_depth[mask]- depth[mask]) ** 2))
-            # loss2 = 0.5 * (torch.log(+ uncertainty_ours[1])).mean()
-            # loss_uncert = loss1 + loss2
-            # loss_ori = torch.mean((batch_gt_depth[mask] - depth[mask]) ** 2)
-            # loss = 0.9 * loss_ori + 0.1 * loss_uncert
-
-            # loss = torch.mean((batch_gt_depth[mask] - depth[mask]) ** 2)
-            loss = ((batch_gt_depth-depth)**2 / (uncertainty+1e-10))[mask].mean()
+            loss = (torch.abs(batch_gt_depth-depth) / torch.sqrt(uncertainty+1e-10))[mask].sum()
         else:
-            # loss = torch.mean((batch_gt_depth[mask] - depth[mask]) ** 2)
-            loss = ((batch_gt_depth-depth)**2 / (uncertainty+1e-10))[mask].mean()
+            loss = (torch.abs(batch_gt_depth-depth) / torch.sqrt(uncertainty+1e-10))[mask].sum()
 
         if self.use_color_in_tracking:
             if self.uncert:
-
-                ####################### L2 ##############
-                # uncert1_c_loss = torch.mean( (1 / (2*(uncertainty_ours[0]))) * ((batch_gt_color - color)**2))
-                # uncert2_c_loss = 0.5 * (torch.log(uncertainty_ours[0])).mean()
-                # uncert_c_loss = uncert1_c_loss + uncert2_c_loss
-                # uncert_c_loss = self.w_color_loss * uncert_c_loss
-                # # loss += uncert_c_loss 
-                # ##################################################
-                # color_loss = ((batch_gt_color - color)**2).mean()            
-                # weighted_color_loss = self.w_color_loss * color_loss
-                # # loss += weighted_color_loss
-                # loss += 0.9 * weighted_color_loss + 0.1 * uncert_c_loss 
-                
-
-                color_loss = ((batch_gt_color - color)**2)[mask].mean()        
-                weighted_color_loss = self.w_color_loss * color_loss
-                loss += weighted_color_loss
-
-                # color_loss = torch.abs(batch_gt_color - color)[mask].sum()
-                # loss += self.w_color_loss*color_loss
+                color_loss = torch.abs(batch_gt_color - color)[mask].sum()
+                loss += self.w_color_loss*color_loss
                 
             else:
-                color_loss = ((batch_gt_color - color)**2)[mask].mean()        
-                weighted_color_loss = self.w_color_loss * color_loss
-                loss += weighted_color_loss
-
-                # color_loss = torch.abs(batch_gt_color - color)[mask].sum()
-                # loss += self.w_color_loss*color_loss
+                color_loss = torch.abs(batch_gt_color - color)[mask].sum()
+                loss += self.w_color_loss*color_loss
 
 
         loss.backward()
@@ -185,57 +177,50 @@ class Tracker(object):
                 self.c[key] = val
             self.prev_mapping_idx = self.mapping_idx[0].clone()
 
+
     def run(self):
         device = self.device
         self.c = {}
         if self.verbose:
-            pbar = self.frame_loader
+            pbar = range(self.slam_index[0], self.slam_index[1] + 1) if self.slam_index else range(self.n_img)
         else:
-            pbar = tqdm(self.frame_loader)
+            pbar = tqdm(range(self.slam_index[0], self.slam_index[1] + 1) if self.slam_index else range(self.n_img))
 
-        for idx, gt_color, gt_depth, gt_c2w in pbar:
+        for frame_idx in pbar:
             if not self.verbose:
-                pbar.set_description(f"Tracking Frame {idx[0]}")
+                pbar.set_description(f"Tracking Frame {frame_idx}")
 
-            idx = idx[0]
-            gt_depth = gt_depth[0]
-            gt_color = gt_color[0]
-            gt_c2w = gt_c2w[0]
+            _, gt_color, gt_depth, gt_c2w = self.frame_reader[frame_idx]
 
             if self.sync_method == 'strict':
-                # strictly mapping and then tracking
-                # initiate mapping every self.every_frame frames
-                if idx > 0 and (idx % self.every_frame == 1 or self.every_frame == 1):
-                    while self.mapping_idx[0] != idx-1:
+                if frame_idx > 0 and (frame_idx % self.every_frame == 1 or self.every_frame == 1):
+                    while self.mapping_idx[0] != frame_idx-1:
                         time.sleep(0.1)
-                    pre_c2w = self.estimate_c2w_list[idx-1].to(device)
+                    pre_c2w = self.estimate_c2w_list[frame_idx-1].to(device)
             elif self.sync_method == 'loose':
-                # mapping idx can be later than tracking idx is within the bound of
-                # [-self.every_frame-self.every_frame//2, -self.every_frame+self.every_frame//2]
-                while self.mapping_idx[0] < idx-self.every_frame-self.every_frame//2:
+                while self.mapping_idx[0] < frame_idx-self.every_frame-self.every_frame//2:
                     time.sleep(0.1)
             elif self.sync_method == 'free':
-                # pure parallel, if mesh/vis happens may cause inbalance
                 pass
 
             self.update_para_from_mapping()
 
             if self.verbose:
                 print(Fore.MAGENTA)
-                print("Tracking Frame ",  idx.item())
+                print("Tracking Frame ",  frame_idx)
                 print(Style.RESET_ALL)
 
-            if idx == 0 or self.gt_camera:
+            if frame_idx == 0 or self.gt_camera:
                 c2w = gt_c2w
                 if not self.no_vis_on_first_frame:
                     self.visualizer.vis(
-                        idx, 0, gt_depth, gt_color, c2w, self.c, self.decoders)
+                        frame_idx, 0, gt_depth, gt_color, c2w, self.c, self.decoders)
 
             else:
                 gt_camera_tensor = get_tensor_from_camera(gt_c2w)
-                if self.const_speed_assumption and idx-2 >= 0:
+                if self.const_speed_assumption and frame_idx-2 >= 0:
                     pre_c2w = pre_c2w.float()
-                    delta = pre_c2w@self.estimate_c2w_list[idx-2].to(
+                    delta = pre_c2w@self.estimate_c2w_list[frame_idx-2].to(
                         device).float().inverse()
                     estimated_new_cam_c2w = delta@pre_c2w
                 else:
@@ -271,7 +256,7 @@ class Tracker(object):
                         camera_tensor = torch.cat([quad, T], 0).to(self.device)
 
                     self.visualizer.vis(
-                        idx, cam_iter, gt_depth, gt_color, camera_tensor, self.c, self.decoders)
+                        frame_idx, cam_iter, gt_depth, gt_color, camera_tensor, self.c, self.decoders)
 
                     loss = self.optimize_cam_in_batch(
                         camera_tensor, gt_color, gt_depth, self.tracking_pixels, optimizer_camera)
@@ -294,9 +279,127 @@ class Tracker(object):
                 c2w = get_camera_from_tensor(
                     candidate_cam_tensor.clone().detach())
                 c2w = torch.cat([c2w, bottom], dim=0)
-            self.estimate_c2w_list[idx] = c2w.clone().cpu()
-            self.gt_c2w_list[idx] = gt_c2w.clone().cpu()
+            self.estimate_c2w_list[frame_idx] = c2w.clone().cpu()
+            self.gt_c2w_list[frame_idx] = gt_c2w.clone().cpu()
             pre_c2w = c2w.clone()
-            self.idx[0] = idx
+            self.idx[0] = frame_idx
             if self.low_gpu_mem:
                 torch.cuda.empty_cache()
+
+
+    # def run(self):
+    #     device = self.device
+    #     self.c = {}
+    #     if self.verbose:
+    #         pbar = self.frame_loader
+    #     else:
+    #         pbar = tqdm(self.frame_loader)
+
+    #     # print(pbar)
+    #     for idx, gt_color, gt_depth, gt_c2w in pbar:
+    #         if not self.verbose:
+    #             pbar.set_description(f"Tracking Frame {idx[0]}")
+
+    #         idx = idx[0]
+    #         gt_depth = gt_depth[0]
+    #         gt_color = gt_color[0]
+    #         gt_c2w = gt_c2w[0]
+
+    #         if self.sync_method == 'strict':
+    #             # strictly mapping and then tracking
+    #             # initiate mapping every self.every_frame frames
+    #             if idx > 0 and (idx % self.every_frame == 1 or self.every_frame == 1):
+    #                 while self.mapping_idx[0] != idx-1:
+    #                     time.sleep(0.1)
+    #                 pre_c2w = self.estimate_c2w_list[idx-1].to(device)
+    #         elif self.sync_method == 'loose':
+    #             # mapping idx can be later than tracking idx is within the bound of
+    #             # [-self.every_frame-self.every_frame//2, -self.every_frame+self.every_frame//2]
+    #             while self.mapping_idx[0] < idx-self.every_frame-self.every_frame//2:
+    #                 time.sleep(0.1)
+    #         elif self.sync_method == 'free':
+    #             # pure parallel, if mesh/vis happens may cause inbalance
+    #             pass
+
+    #         self.update_para_from_mapping()
+
+    #         if self.verbose:
+    #             print(Fore.MAGENTA)
+    #             print("Tracking Frame ",  idx.item())
+    #             print(Style.RESET_ALL)
+
+    #         if idx == 0 or self.gt_camera:
+    #             c2w = gt_c2w
+    #             if not self.no_vis_on_first_frame:
+    #                 self.visualizer.vis(
+    #                     idx, 0, gt_depth, gt_color, c2w, self.c, self.decoders)
+
+    #         else:
+    #             gt_camera_tensor = get_tensor_from_camera(gt_c2w)
+    #             if self.const_speed_assumption and idx-2 >= 0:
+    #                 pre_c2w = pre_c2w.float()
+    #                 delta = pre_c2w@self.estimate_c2w_list[idx-2].to(
+    #                     device).float().inverse()
+    #                 estimated_new_cam_c2w = delta@pre_c2w
+    #             else:
+    #                 estimated_new_cam_c2w = pre_c2w
+
+    #             camera_tensor = get_tensor_from_camera(
+    #                 estimated_new_cam_c2w.detach())
+    #             if self.seperate_LR:
+    #                 camera_tensor = camera_tensor.to(device).detach()
+    #                 T = camera_tensor[-3:]
+    #                 quad = camera_tensor[:4]
+    #                 cam_para_list_quad = [quad]
+    #                 quad = Variable(quad, requires_grad=True)
+    #                 T = Variable(T, requires_grad=True)
+    #                 camera_tensor = torch.cat([quad, T], 0)
+    #                 cam_para_list_T = [T]
+    #                 cam_para_list_quad = [quad]
+    #                 optimizer_camera = torch.optim.Adam([{'params': cam_para_list_T, 'lr': self.cam_lr},
+    #                                                      {'params': cam_para_list_quad, 'lr': self.cam_lr*0.2}])
+    #             else:
+    #                 camera_tensor = Variable(
+    #                     camera_tensor.to(device), requires_grad=True)
+    #                 cam_para_list = [camera_tensor]
+    #                 optimizer_camera = torch.optim.Adam(
+    #                     cam_para_list, lr=self.cam_lr)
+
+    #             initial_loss_camera_tensor = torch.abs(
+    #                 gt_camera_tensor.to(device)-camera_tensor).mean().item()
+    #             candidate_cam_tensor = None
+    #             current_min_loss = 10000000000.
+    #             for cam_iter in range(self.num_cam_iters):
+    #                 if self.seperate_LR:
+    #                     camera_tensor = torch.cat([quad, T], 0).to(self.device)
+
+    #                 self.visualizer.vis(
+    #                     idx, cam_iter, gt_depth, gt_color, camera_tensor, self.c, self.decoders)
+
+    #                 loss = self.optimize_cam_in_batch(
+    #                     camera_tensor, gt_color, gt_depth, self.tracking_pixels, optimizer_camera)
+
+    #                 if cam_iter == 0:
+    #                     initial_loss = loss
+
+    #                 loss_camera_tensor = torch.abs(
+    #                     gt_camera_tensor.to(device)-camera_tensor).mean().item()
+    #                 if self.verbose:
+    #                     if cam_iter == self.num_cam_iters-1:
+    #                         print(
+    #                             f'Re-rendering loss: {initial_loss:.2f}->{loss:.2f} ' +
+    #                             f'camera tensor error: {initial_loss_camera_tensor:.4f}->{loss_camera_tensor:.4f}')
+    #                 if loss < current_min_loss:
+    #                     current_min_loss = loss
+    #                     candidate_cam_tensor = camera_tensor.clone().detach()
+    #             bottom = torch.from_numpy(np.array([0, 0, 0, 1.]).reshape(
+    #                 [1, 4])).type(torch.float32).to(self.device)
+    #             c2w = get_camera_from_tensor(
+    #                 candidate_cam_tensor.clone().detach())
+    #             c2w = torch.cat([c2w, bottom], dim=0)
+    #         self.estimate_c2w_list[idx] = c2w.clone().cpu()
+    #         self.gt_c2w_list[idx] = gt_c2w.clone().cpu()
+    #         pre_c2w = c2w.clone()
+    #         self.idx[0] = idx
+    #         if self.low_gpu_mem:
+    #             torch.cuda.empty_cache()

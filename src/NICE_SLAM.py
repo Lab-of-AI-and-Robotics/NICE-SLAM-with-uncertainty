@@ -35,7 +35,10 @@ class NICE_SLAM():
         
         self.uncert = args.uncert
         self.sigmoid = args.sigmoid
+        self.slam_index = args.slam_index
+        self.test_index = args.test_index
         
+
         if self.sigmoid:
             print("sigmoid rgb")
         
@@ -101,10 +104,10 @@ class NICE_SLAM():
         self.renderer = Renderer(cfg, args, self, uncert=self.uncert, sigmoid=self.sigmoid)
         self.mesher = Mesher(cfg, args, self, uncert = self.uncert, sigmoid=self.sigmoid)
         self.logger = Logger(cfg, args, self)
-        self.mapper = Mapper(cfg, args, self, coarse_mapper=False, uncert=self.uncert)
+        self.mapper = Mapper(cfg, args, self, coarse_mapper=False, uncert=self.uncert, slam_index = self.slam_index, test_index = self.test_index)
         if self.coarse:
-            self.coarse_mapper = Mapper(cfg, args, self, coarse_mapper=True, uncert=self.uncert)
-        self.tracker = Tracker(cfg, args, self, uncert=self.uncert)
+            self.coarse_mapper = Mapper(cfg, args, self, coarse_mapper=True, uncert=self.uncert, slam_index = self.slam_index, test_index = self.test_index)
+        self.tracker = Tracker(cfg, args, self, uncert=self.uncert, slam_index = self.slam_index)
         self.print_output_desc()
 
     def print_output_desc(self):
@@ -274,6 +277,7 @@ class NICE_SLAM():
             time.sleep(1)
 
         self.tracker.run()
+        print("track end")
 
     def mapping(self, rank):
         """
@@ -284,6 +288,7 @@ class NICE_SLAM():
         """
 
         self.mapper.run()
+        print("map end")
 
     def coarse_mapping(self, rank):
         """
@@ -294,6 +299,7 @@ class NICE_SLAM():
         """
 
         self.coarse_mapper.run()
+        print("coarse end")
 
     def run(self):
         """
