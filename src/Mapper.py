@@ -740,7 +740,6 @@ class Mapper(object):
         init_idx = self.slam_index[0]
         end_idx = self.slam_index[1]
         
-        # 초기 프레임 로드 및 초기 카메라 행렬 설정
         _, gt_color, gt_depth, gt_c2w = self.frame_reader[init_idx]
         self.estimate_c2w_list[init_idx] = gt_c2w.cpu()
         init = True
@@ -916,7 +915,7 @@ class Mapper(object):
                             cv2.imwrite(os.path.join(output_dir, 'uncertainty_image', f'uncert_pure_{frame_n:05d}.png'), uncert_img2)
                             print("saved uncert image")
 
-                    # Calculate metrics
+                    
                     mse_loss = torch.nn.functional.mse_loss(gt_color[gt_depth > 0], color[gt_depth > 0])
                     psnr_frame = -10. * torch.log10(mse_loss)
                     ssim_value = ms_ssim(gt_color.transpose(0, 2).unsqueeze(0).float(), color.transpose(0, 2).unsqueeze(0).float(), data_range=1.0, size_average=True)
@@ -941,7 +940,6 @@ class Mapper(object):
 
                     frame_cnt += 1
 
-                # Calculate and print average metrics
                 avg_psnr = psnr_sum / frame_cnt
                 avg_ssim = ssim_sum / frame_cnt
                 avg_lpips = lpips_sum / frame_cnt
@@ -972,133 +970,4 @@ class Mapper(object):
 
 
 
-        # ########################################
-        # if not self.coarse_mapper:
-        #     output_dir = self.output
-        #     os.makedirs(output_dir, exist_ok=True)
-        #     os.makedirs(os.path.join(output_dir, 'rendered_image'), exist_ok=True)
-        #     if self.uncert:
-        #         os.makedirs(os.path.join(output_dir, 'uncertainty_image'), exist_ok=True)
-        #     cal_lpips = LearnedPerceptualImagePatchSimilarity(net_type='alex', normalize=True).to(self.device)
-
-        #     psnr_sum = 0
-        #     ssim_sum = 0
-        #     lpips_sum = 0
-        #     psnr_sum_5 = 0
-        #     ssim_sum_5 = 0
-        #     lpips_sum_5 = 0
-        #     psnr_sum_non_5 = 0
-        #     ssim_sum_non_5 = 0
-        #     lpips_sum_non_5 = 0
-        #     frame_cnt = 0
-        #     frame_cnt_5 = 0
-        #     frame_cnt_non_5 = 0
-
-        #     result_file = os.path.join(output_dir, 'result.txt')
-        #     with open(result_file, 'w') as f:
-        #         print("txt file open")
-        #         for frame_n in range(len(self.test_img)):
-        #             idx, gt_color, gt_depth, gt_c2w = self.test_img[frame_n]
-        #             cur_c2w = self.estimate_c2w_list[frame_n].to(self.device)
-        #             cur_c2w = gt_c2w # only for test unobserved view
-        #             if self.uncert:
-        #                 depth, uncertainty, color, uncertainty_ours = self.renderer.render_img(
-        #                     self.c,
-        #                     self.decoders,
-        #                     cur_c2w,
-        #                     self.device,
-        #                     stage='color',
-        #                     gt_depth=gt_depth)
-        #             else:
-        #                 depth, uncertainty, color = self.renderer.render_img(
-        #                     self.c,
-        #                     self.decoders,
-        #                     cur_c2w,
-        #                     self.device,
-        #                     stage='color',
-        #                     gt_depth=gt_depth)
-
-        #             gt_color_np = gt_color.cpu().numpy().astype(np.float32)
-        #             color_np = color.cpu().numpy().astype(np.float32)
-
-        #             if frame_n % 100 == 0:
-        #                 img = cv2.cvtColor(color_np * 255, cv2.COLOR_RGB2BGR)
-        #                 gt_img = cv2.cvtColor(gt_color_np * 255, cv2.COLOR_RGB2BGR)
-        #                 cv2.imwrite(os.path.join(output_dir, 'rendered_image', f'frame_{frame_n:05d}.png'), img)
-        #                 cv2.imwrite(os.path.join(output_dir, 'rendered_image', f'frame_{frame_n:05d}_gt.png'), gt_img)
-
-        #                 if self.uncert:
-
-        #                     uncertainty_ours_np0 = uncertainty_ours[0].cpu().numpy().astype(np.float32)
-        #                     uncertainty_ours_np1 = uncertainty_ours[1].cpu().numpy().astype(np.float32)
-        #                     uncertainty_ours_np2 = uncertainty_ours[2].cpu().numpy().astype(np.float32)
-        #                     uncertainty_ours_np0_normalized = uncertainty_ours_np0 / np.max(uncertainty_ours_np0)
-        #                     uncertainty_ours_np1_normalized = uncertainty_ours_np1 / np.max(uncertainty_ours_np1)
-        #                     uncertainty_ours_np2_normalized = uncertainty_ours_np2 / np.max(uncertainty_ours_np2)
-                            
-        #                     uncertainty_ours_np0_normalized = np.clip(uncertainty_ours_np0_normalized, 0, 1)
-        #                     uncertainty_ours_np1_normalized = np.clip(uncertainty_ours_np1_normalized, 0, 1)
-        #                     uncertainty_ours_np2_normalized = np.clip(uncertainty_ours_np2_normalized, 0, 1)
-                            
-        #                     uncert_img0 = (uncertainty_ours_np0_normalized * 255).astype(np.uint8)
-        #                     uncert_img1 = (uncertainty_ours_np1_normalized * 255).astype(np.uint8)
-        #                     uncert_img2 = (uncertainty_ours_np2_normalized * 255).astype(np.uint8)
-    
-        #                     cv2.imwrite(os.path.join(output_dir, 'uncertainty_image', f'uncert_rgb_{frame_n:05d}.png'), uncert_img0)
-        #                     cv2.imwrite(os.path.join(output_dir, 'uncertainty_image', f'uncert_depth_{frame_n:05d}.png'), uncert_img1)
-        #                     cv2.imwrite(os.path.join(output_dir, 'uncertainty_image', f'uncert_pure_{frame_n:05d}.png'), uncert_img2)
-        #                     print("saved uncert image")
-
-        #             # Calculate metrics
-        #             mse_loss = torch.nn.functional.mse_loss(gt_color[gt_depth > 0], color[gt_depth > 0])
-        #             psnr_frame = -10. * torch.log10(mse_loss)
-        #             ssim_value = ms_ssim(gt_color.transpose(0, 2).unsqueeze(0).float(), color.transpose(0, 2).unsqueeze(0).float(), data_range=1.0, size_average=True)
-        #             lpips_value = cal_lpips(torch.clamp(gt_color.unsqueeze(0).permute(0, 3, 1, 2).float(), 0.0, 1.0), torch.clamp(color.unsqueeze(0).permute(0, 3, 1, 2).float(), 0.0, 1.0)).item()
-
-        #             psnr_sum += psnr_frame
-        #             ssim_sum += ssim_value
-        #             lpips_sum += lpips_value
-
-        #             if frame_n % 5 == 0:
-        #                 psnr_sum_5 += psnr_frame
-        #                 ssim_sum_5 += ssim_value
-        #                 lpips_sum_5 += lpips_value
-        #                 frame_cnt_5 += 1
-        #             else:
-        #                 psnr_sum_non_5 += psnr_frame
-        #                 ssim_sum_non_5 += ssim_value
-        #                 lpips_sum_non_5 += lpips_value
-        #                 frame_cnt_non_5 += 1
-
-        #             f.write(f'Frame {frame_n:05d}: PSNR: {psnr_frame:.4f}, SSIM: {ssim_value:.4f}, LPIPS: {lpips_value:.4f}\n')
-
-        #             frame_cnt += 1
-
-        #         # Calculate and print average metrics
-        #         avg_psnr = psnr_sum / frame_cnt
-        #         avg_ssim = ssim_sum / frame_cnt
-        #         avg_lpips = lpips_sum / frame_cnt
-
-        #         if frame_cnt_5 > 0:
-        #             avg_psnr_5 = psnr_sum_5 / frame_cnt_5
-        #             avg_ssim_5 = ssim_sum_5 / frame_cnt_5
-        #             avg_lpips_5 = lpips_sum_5 / frame_cnt_5
-        #         else:
-        #             avg_psnr_5 = avg_ssim_5 = avg_lpips_5 = 0
-
-        #         if frame_cnt_non_5 > 0:
-        #             avg_psnr_non_5 = psnr_sum_non_5 / frame_cnt_non_5
-        #             avg_ssim_non_5 = ssim_sum_non_5 / frame_cnt_non_5
-        #             avg_lpips_non_5 = lpips_sum_non_5 / frame_cnt_non_5
-        #         else:
-        #             avg_psnr_non_5 = avg_ssim_non_5 = avg_lpips_non_5 = 0
-
-        #         f.write(f'\nAverage (all frames): PSNR: {avg_psnr:.4f}, SSIM: {avg_ssim:.4f}, LPIPS: {avg_lpips:.4f}\n')
-        #         f.write(f'\nAverage (frame_n % 5 == 0): PSNR: {avg_psnr_5:.4f}, SSIM: {avg_ssim_5:.4f}, LPIPS: {avg_lpips_5:.4f}\n')
-        #         f.write(f'\nAverage (frame_n % 5 != 0): PSNR: {avg_psnr_non_5:.4f}, SSIM: {avg_ssim_non_5:.4f}, LPIPS: {avg_lpips_non_5:.4f}\n')
-
-        #     print(f'avg_ms_ssim: {avg_ssim}')
-        #     print(f'avg_psnr: {avg_psnr}')
-        #     print(f'avg_lpips: {avg_lpips}')
-
-        #     #########################################
+   
